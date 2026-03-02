@@ -20,7 +20,7 @@ function urlToTitle(url) {
 }
 // ── SIDEBAR DATA ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "poe-sidebar";
-const TAB_STORAGE_KEY = "poe-tabs"; // Key for tabs
+const TAB_STORAGE_KEY = "poe-tabs";
 const defaultData = [
     {
         id: uid(),
@@ -58,7 +58,6 @@ const tabs = [];
 let activeTabId = null;
 const tabList = getEl("tab-list");
 const webviewContainer = getEl("webview-container");
-// C. Save Tabs Logic
 function saveTabs() {
     const state = {
         tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title })),
@@ -66,7 +65,6 @@ function saveTabs() {
     };
     localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(state));
 }
-// Modified createTab to accept an ID (for restoring sessions)
 function createTab(url, title, existingId) {
     const id = existingId || uid();
     const webview = document.createElement("webview");
@@ -89,18 +87,24 @@ function createTab(url, title, existingId) {
             if (titleEl)
                 titleEl.textContent = e.title;
         }
-        saveTabs(); // Save on title change
+        saveTabs();
     });
     // Track the live URL and save state
     webview.addEventListener("did-navigate", (e) => {
         tab.url = e.url;
-        saveTabs(); // Save on navigation
+        saveTabs();
     });
     webview.addEventListener("did-navigate-in-page", (e) => {
         if (e.isMainFrame) {
             tab.url = e.url;
             saveTabs();
         }
+    });
+    // NEW: Context Menu Handler
+    // Note: 'context-menu' is a special Electron event, not the standard DOM contextmenu
+    webview.addEventListener("context-menu", (e) => {
+        // The 'params' object contains linkURL, srcURL, selectionText, etc.
+        window.electronAPI.showContextMenu(e.params);
     });
     return tab;
 }
@@ -136,20 +140,17 @@ function setActiveTab(id) {
     renderTabs();
     saveTabs();
 }
-// C. Restore Tabs Logic
 function restoreTabs() {
     const raw = localStorage.getItem(TAB_STORAGE_KEY);
     if (!raw)
         return;
     try {
         const state = JSON.parse(raw);
-        // Recreate all tabs
         if (state.tabs && Array.isArray(state.tabs)) {
             state.tabs.forEach(t => {
                 createTab(t.url, t.title, t.id);
             });
         }
-        // Set active tab
         if (state.activeId && tabs.find(t => t.id === state.activeId)) {
             setActiveTab(state.activeId);
         }
@@ -162,7 +163,6 @@ function restoreTabs() {
     }
 }
 function renderTabs() {
-    // Empty state
     let emptyState = document.getElementById("empty-state");
     if (tabs.length === 0) {
         tabList.innerHTML = "";
@@ -178,7 +178,6 @@ function renderTabs() {
         return;
     }
     emptyState?.remove();
-    // Sync DOM to tabs array
     tabList.querySelectorAll(".tab").forEach((el) => {
         if (!tabs.find((t) => t.id === el.dataset["id"]))
             el.remove();
@@ -189,7 +188,6 @@ function renderTabs() {
             existing.classList.toggle("active", tab.id === activeTabId);
             return;
         }
-        // Create new tab element
         const el = document.createElement("div");
         el.className = "tab" + (tab.id === activeTabId ? " active" : "");
         el.dataset["id"] = tab.id;
@@ -374,7 +372,7 @@ function findParent(arr, id, parent = arr) {
     }
     return null;
 }
-// ── CONTEXT MENU ─────────────────────────────────────────────────────────────
+// ── CONTEXT MENU (SIDEBAR) ───────────────────────────────────────────────────
 function showCtxMenu(x, y, onNode = false) {
     const hasNode = onNode && ctxTarget?.node != null;
     getEl("ctx-rename-sep").style.display = hasNode ? "" : "none";

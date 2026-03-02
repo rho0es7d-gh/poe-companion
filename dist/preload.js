@@ -5,4 +5,8 @@ electron_1.contextBridge.exposeInMainWorld("electronAPI", {
     onOpenInNewTab: (callback) => {
         electron_1.ipcRenderer.on("open-in-new-tab", (_event, url) => callback(url));
     },
+    // NEW: Allow renderer to trigger the context menu
+    showContextMenu: (params) => {
+        electron_1.ipcRenderer.send("show-context-menu", params);
+    }
 });

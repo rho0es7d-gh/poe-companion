@@ -31,7 +31,6 @@ interface BrowserTab {
   webview: Electron.WebviewTag;
 }
 
-// C. Interfaces for Saving State
 interface SavedTabState {
   tabs: { id: string; url: string; title: string }[];
   activeId: string | null;
@@ -60,7 +59,7 @@ function urlToTitle(url: string): string {
 // ── SIDEBAR DATA ──────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "poe-sidebar";
-const TAB_STORAGE_KEY = "poe-tabs"; // Key for tabs
+const TAB_STORAGE_KEY = "poe-tabs";
 
 const defaultData: TreeNode[] = [
   {
@@ -107,7 +106,6 @@ let activeTabId: string | null = null;
 const tabList          = getEl<HTMLDivElement>("tab-list");
 const webviewContainer = getEl<HTMLDivElement>("webview-container");
 
-// C. Save Tabs Logic
 function saveTabs(): void {
   const state: SavedTabState = {
     tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title })),
@@ -116,7 +114,6 @@ function saveTabs(): void {
   localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(state));
 }
 
-// Modified createTab to accept an ID (for restoring sessions)
 function createTab(url: string, title: string, existingId?: string): BrowserTab {
   const id = existingId || uid();
 
@@ -142,13 +139,13 @@ function createTab(url: string, title: string, existingId?: string): BrowserTab 
       const titleEl = tabEl.querySelector(".tab-title");
       if (titleEl) titleEl.textContent = e.title;
     }
-    saveTabs(); // Save on title change
+    saveTabs();
   });
 
   // Track the live URL and save state
   webview.addEventListener("did-navigate", (e) => {
     tab.url = e.url;
-    saveTabs(); // Save on navigation
+    saveTabs();
   });
 
   webview.addEventListener("did-navigate-in-page", (e) => {
@@ -156,6 +153,13 @@ function createTab(url: string, title: string, existingId?: string): BrowserTab 
       tab.url = e.url;
       saveTabs();
     }
+  });
+
+  // NEW: Context Menu Handler
+  // Note: 'context-menu' is a special Electron event, not the standard DOM contextmenu
+  webview.addEventListener("context-menu", (e: any) => {
+    // The 'params' object contains linkURL, srcURL, selectionText, etc.
+    (window as any).electronAPI.showContextMenu(e.params);
   });
 
   return tab;
@@ -199,7 +203,6 @@ function setActiveTab(id: string): void {
   saveTabs();
 }
 
-// C. Restore Tabs Logic
 function restoreTabs(): void {
   const raw = localStorage.getItem(TAB_STORAGE_KEY);
   if (!raw) return;
@@ -207,14 +210,12 @@ function restoreTabs(): void {
   try {
     const state: SavedTabState = JSON.parse(raw);
     
-    // Recreate all tabs
     if (state.tabs && Array.isArray(state.tabs)) {
       state.tabs.forEach(t => {
         createTab(t.url, t.title, t.id);
       });
     }
 
-    // Set active tab
     if (state.activeId && tabs.find(t => t.id === state.activeId)) {
       setActiveTab(state.activeId);
     } else if (tabs.length > 0) {
@@ -226,7 +227,6 @@ function restoreTabs(): void {
 }
 
 function renderTabs(): void {
-  // Empty state
   let emptyState = document.getElementById("empty-state");
   if (tabs.length === 0) {
     tabList.innerHTML = "";
@@ -244,7 +244,6 @@ function renderTabs(): void {
 
   emptyState?.remove();
 
-  // Sync DOM to tabs array
   tabList.querySelectorAll<HTMLElement>(".tab").forEach((el) => {
     if (!tabs.find((t) => t.id === el.dataset["id"])) el.remove();
   });
@@ -257,7 +256,6 @@ function renderTabs(): void {
       return;
     }
 
-    // Create new tab element
     const el = document.createElement("div");
     el.className = "tab" + (tab.id === activeTabId ? " active" : "");
     el.dataset["id"] = tab.id;
@@ -470,7 +468,7 @@ function findParent(arr: TreeNode[], id: string, parent: TreeNode[] = arr): Tree
   return null;
 }
 
-// ── CONTEXT MENU ─────────────────────────────────────────────────────────────
+// ── CONTEXT MENU (SIDEBAR) ───────────────────────────────────────────────────
 
 function showCtxMenu(x: number, y: number, onNode = false): void {
   const hasNode = onNode && ctxTarget?.node != null;
