@@ -31,6 +31,12 @@ interface BrowserTab {
   webview: Electron.WebviewTag;
 }
 
+// C. Interfaces for Saving State
+interface SavedTabState {
+  tabs: { id: string; url: string; title: string }[];
+  activeId: string | null;
+}
+
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 
 function uid(): string {
@@ -54,6 +60,7 @@ function urlToTitle(url: string): string {
 // ── SIDEBAR DATA ──────────────────────────────────────────────────────────────
 
 const STORAGE_KEY = "poe-sidebar";
+const TAB_STORAGE_KEY = "poe-tabs"; // Key for tabs
 
 const defaultData: TreeNode[] = [
   {
@@ -80,12 +87,6 @@ const defaultData: TreeNode[] = [
         name: "PoE Ninja",
         url: "https://poe.ninja",
       },
-      {
-        id: uid(),
-        type: "page",
-        name: "PoE Ninja Builds",
-        url: "https://poe.ninja/builds",
-      },
     ],
   },
 ];
@@ -106,8 +107,18 @@ let activeTabId: string | null = null;
 const tabList          = getEl<HTMLDivElement>("tab-list");
 const webviewContainer = getEl<HTMLDivElement>("webview-container");
 
-function createTab(url: string, title: string): BrowserTab {
-  const id = uid();
+// C. Save Tabs Logic
+function saveTabs(): void {
+  const state: SavedTabState = {
+    tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title })),
+    activeId: activeTabId
+  };
+  localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(state));
+}
+
+// Modified createTab to accept an ID (for restoring sessions)
+function createTab(url: string, title: string, existingId?: string): BrowserTab {
+  const id = existingId || uid();
 
   const webview = document.createElement("webview") as Electron.WebviewTag;
   webview.src = url;
@@ -123,7 +134,7 @@ function createTab(url: string, title: string): BrowserTab {
   const tab: BrowserTab = { id, title, url, webview };
   tabs.push(tab);
 
-  // Update tab title — only patch the text node, don't re-render everything
+  // Update tab title and save state
   webview.addEventListener("page-title-updated", (e) => {
     tab.title = e.title;
     const tabEl = tabList.querySelector<HTMLElement>(`.tab[data-id="${id}"]`);
@@ -131,15 +142,20 @@ function createTab(url: string, title: string): BrowserTab {
       const titleEl = tabEl.querySelector(".tab-title");
       if (titleEl) titleEl.textContent = e.title;
     }
+    saveTabs(); // Save on title change
   });
 
-  // Track the live URL as the webview navigates
+  // Track the live URL and save state
   webview.addEventListener("did-navigate", (e) => {
     tab.url = e.url;
+    saveTabs(); // Save on navigation
   });
 
   webview.addEventListener("did-navigate-in-page", (e) => {
-    if (e.isMainFrame) tab.url = e.url;
+    if (e.isMainFrame) {
+      tab.url = e.url;
+      saveTabs();
+    }
   });
 
   return tab;
@@ -148,6 +164,7 @@ function createTab(url: string, title: string): BrowserTab {
 function openTab(url: string, title?: string): void {
   const tab = createTab(url, title ?? urlToTitle(url));
   setActiveTab(tab.id);
+  saveTabs();
 }
 
 function closeTab(id: string): void {
@@ -166,8 +183,11 @@ function closeTab(id: string): void {
   renderTabs();
 
   if (activeTabId) {
-    tabs.find((t) => t.id === activeTabId)!.webview.style.display = "flex";
+    const nextTab = tabs.find((t) => t.id === activeTabId);
+    if(nextTab) nextTab.webview.style.display = "flex";
   }
+  
+  saveTabs();
 }
 
 function setActiveTab(id: string): void {
@@ -176,6 +196,33 @@ function setActiveTab(id: string): void {
     t.webview.style.display = t.id === id ? "flex" : "none";
   });
   renderTabs();
+  saveTabs();
+}
+
+// C. Restore Tabs Logic
+function restoreTabs(): void {
+  const raw = localStorage.getItem(TAB_STORAGE_KEY);
+  if (!raw) return;
+
+  try {
+    const state: SavedTabState = JSON.parse(raw);
+    
+    // Recreate all tabs
+    if (state.tabs && Array.isArray(state.tabs)) {
+      state.tabs.forEach(t => {
+        createTab(t.url, t.title, t.id);
+      });
+    }
+
+    // Set active tab
+    if (state.activeId && tabs.find(t => t.id === state.activeId)) {
+      setActiveTab(state.activeId);
+    } else if (tabs.length > 0) {
+      setActiveTab(tabs[0].id);
+    }
+  } catch (e) {
+    console.error("Failed to restore tabs", e);
+  }
 }
 
 function renderTabs(): void {
@@ -197,8 +244,7 @@ function renderTabs(): void {
 
   emptyState?.remove();
 
-  // Sync DOM to tabs array without wiping everything
-  // Remove tab elements that no longer exist
+  // Sync DOM to tabs array
   tabList.querySelectorAll<HTMLElement>(".tab").forEach((el) => {
     if (!tabs.find((t) => t.id === el.dataset["id"])) el.remove();
   });
@@ -207,7 +253,6 @@ function renderTabs(): void {
     const existing = tabList.querySelector<HTMLElement>(`.tab[data-id="${tab.id}"]`);
 
     if (existing) {
-      // Just update active class
       existing.classList.toggle("active", tab.id === activeTabId);
       return;
     }
@@ -242,10 +287,8 @@ function renderTabs(): void {
     el.addEventListener("click", () => setActiveTab(tab.id));
     el.append(favicon, titleEl, closeEl);
 
-    // Insert at correct position
-    const allTabs = tabList.querySelectorAll(".tab");
-    if (i < allTabs.length) {
-      tabList.insertBefore(el, allTabs[i]);
+    if (i < tabList.children.length) {
+      tabList.insertBefore(el, tabList.children[i]);
     } else {
       tabList.appendChild(el);
     }
@@ -274,7 +317,7 @@ const modalUrlField = getEl<HTMLDivElement>("modal-url-field");
 
 const SIDEBAR_MIN = 160;
 const SIDEBAR_MAX = 500;
-const DRAG_THRESHOLD = 4; // pixels moved before we treat it as a drag not a click
+const DRAG_THRESHOLD = 4; 
 
 let sidebarWidth = 240;
 let isDragging = false;
@@ -282,20 +325,18 @@ let dragStartX = 0;
 let dragStartWidth = 0;
 let dragMoved = 0;
 
-// Remove the CSS transition while dragging so it follows the mouse instantly
 function setSidebarWidth(width: number): void {
   sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width));
   sidebar.style.width = `${sidebarWidth}px`;
 }
 
 toggleTabEl.addEventListener("mousedown", (e: MouseEvent) => {
-  if (e.button !== 0) return; // left click only
+  if (e.button !== 0) return;
   isDragging = false;
   dragMoved = 0;
   dragStartX = e.clientX;
   dragStartWidth = sidebar.classList.contains("open") ? sidebarWidth : 0;
 
-  // Disable transition for smooth dragging
   sidebar.style.transition = "none";
 
   const onMouseMove = (e: MouseEvent) => {
@@ -304,14 +345,11 @@ toggleTabEl.addEventListener("mousedown", (e: MouseEvent) => {
 
     if (dragMoved > DRAG_THRESHOLD) {
       isDragging = true;
-
-      // If sidebar was closed, open it as soon as we start dragging right
       if (!sidebar.classList.contains("open") && delta > 0) {
         sidebar.classList.add("open");
         toggleTabEl.classList.add("open");
         dragStartWidth = SIDEBAR_MIN;
       }
-
       if (sidebar.classList.contains("open")) {
         setSidebarWidth(dragStartWidth + delta);
       }
@@ -321,12 +359,9 @@ toggleTabEl.addEventListener("mousedown", (e: MouseEvent) => {
   const onMouseUp = () => {
     document.removeEventListener("mousemove", onMouseMove);
     document.removeEventListener("mouseup", onMouseUp);
-
-    // Restore transition
     sidebar.style.transition = "";
 
     if (!isDragging) {
-      // It was a clean click — toggle open/close
       const isOpen = sidebar.classList.toggle("open");
       toggleTabEl.classList.toggle("open");
       if (isOpen) {
@@ -335,14 +370,12 @@ toggleTabEl.addEventListener("mousedown", (e: MouseEvent) => {
         sidebar.style.width = "0";
       }
     } else {
-      // Finished dragging — if dragged to below min, close sidebar
       if (sidebarWidth <= SIDEBAR_MIN && dragStartWidth > SIDEBAR_MIN) {
         sidebar.classList.remove("open");
         toggleTabEl.classList.remove("open");
         sidebar.style.width = "0";
       }
     }
-
     isDragging = false;
   };
 
@@ -563,11 +596,10 @@ function insertNode(node: TreeNode): void {
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 
-// Listen for new-tab requests coming from webview window.open() calls,
-// intercepted at the main process level and forwarded here via IPC
 (window as any).electronAPI.onOpenInNewTab((url: string) => {
   openTab(url, urlToTitle(url));
 });
 
 renderTree();
+restoreTabs(); // Restore previous session
 renderTabs();

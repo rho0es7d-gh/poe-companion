@@ -20,6 +20,7 @@ function urlToTitle(url) {
 }
 // ── SIDEBAR DATA ──────────────────────────────────────────────────────────────
 const STORAGE_KEY = "poe-sidebar";
+const TAB_STORAGE_KEY = "poe-tabs"; // Key for tabs
 const defaultData = [
     {
         id: uid(),
@@ -45,12 +46,6 @@ const defaultData = [
                 name: "PoE Ninja",
                 url: "https://poe.ninja",
             },
-            {
-                id: uid(),
-                type: "page",
-                name: "PoE Ninja Builds",
-                url: "https://poe.ninja/builds",
-            },
         ],
     },
 ];
@@ -63,8 +58,17 @@ const tabs = [];
 let activeTabId = null;
 const tabList = getEl("tab-list");
 const webviewContainer = getEl("webview-container");
-function createTab(url, title) {
-    const id = uid();
+// C. Save Tabs Logic
+function saveTabs() {
+    const state = {
+        tabs: tabs.map(t => ({ id: t.id, url: t.url, title: t.title })),
+        activeId: activeTabId
+    };
+    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(state));
+}
+// Modified createTab to accept an ID (for restoring sessions)
+function createTab(url, title, existingId) {
+    const id = existingId || uid();
     const webview = document.createElement("webview");
     webview.src = url;
     webview.setAttribute("allowpopups", "true");
@@ -76,7 +80,7 @@ function createTab(url, title) {
     webviewContainer.appendChild(webview);
     const tab = { id, title, url, webview };
     tabs.push(tab);
-    // Update tab title — only patch the text node, don't re-render everything
+    // Update tab title and save state
     webview.addEventListener("page-title-updated", (e) => {
         tab.title = e.title;
         const tabEl = tabList.querySelector(`.tab[data-id="${id}"]`);
@@ -85,20 +89,25 @@ function createTab(url, title) {
             if (titleEl)
                 titleEl.textContent = e.title;
         }
+        saveTabs(); // Save on title change
     });
-    // Track the live URL as the webview navigates
+    // Track the live URL and save state
     webview.addEventListener("did-navigate", (e) => {
         tab.url = e.url;
+        saveTabs(); // Save on navigation
     });
     webview.addEventListener("did-navigate-in-page", (e) => {
-        if (e.isMainFrame)
+        if (e.isMainFrame) {
             tab.url = e.url;
+            saveTabs();
+        }
     });
     return tab;
 }
 function openTab(url, title) {
     const tab = createTab(url, title ?? urlToTitle(url));
     setActiveTab(tab.id);
+    saveTabs();
 }
 function closeTab(id) {
     const idx = tabs.findIndex((t) => t.id === id);
@@ -113,8 +122,11 @@ function closeTab(id) {
     }
     renderTabs();
     if (activeTabId) {
-        tabs.find((t) => t.id === activeTabId).webview.style.display = "flex";
+        const nextTab = tabs.find((t) => t.id === activeTabId);
+        if (nextTab)
+            nextTab.webview.style.display = "flex";
     }
+    saveTabs();
 }
 function setActiveTab(id) {
     activeTabId = id;
@@ -122,6 +134,32 @@ function setActiveTab(id) {
         t.webview.style.display = t.id === id ? "flex" : "none";
     });
     renderTabs();
+    saveTabs();
+}
+// C. Restore Tabs Logic
+function restoreTabs() {
+    const raw = localStorage.getItem(TAB_STORAGE_KEY);
+    if (!raw)
+        return;
+    try {
+        const state = JSON.parse(raw);
+        // Recreate all tabs
+        if (state.tabs && Array.isArray(state.tabs)) {
+            state.tabs.forEach(t => {
+                createTab(t.url, t.title, t.id);
+            });
+        }
+        // Set active tab
+        if (state.activeId && tabs.find(t => t.id === state.activeId)) {
+            setActiveTab(state.activeId);
+        }
+        else if (tabs.length > 0) {
+            setActiveTab(tabs[0].id);
+        }
+    }
+    catch (e) {
+        console.error("Failed to restore tabs", e);
+    }
 }
 function renderTabs() {
     // Empty state
@@ -140,8 +178,7 @@ function renderTabs() {
         return;
     }
     emptyState?.remove();
-    // Sync DOM to tabs array without wiping everything
-    // Remove tab elements that no longer exist
+    // Sync DOM to tabs array
     tabList.querySelectorAll(".tab").forEach((el) => {
         if (!tabs.find((t) => t.id === el.dataset["id"]))
             el.remove();
@@ -149,7 +186,6 @@ function renderTabs() {
     tabs.forEach((tab, i) => {
         const existing = tabList.querySelector(`.tab[data-id="${tab.id}"]`);
         if (existing) {
-            // Just update active class
             existing.classList.toggle("active", tab.id === activeTabId);
             return;
         }
@@ -179,10 +215,8 @@ function renderTabs() {
         });
         el.addEventListener("click", () => setActiveTab(tab.id));
         el.append(favicon, titleEl, closeEl);
-        // Insert at correct position
-        const allTabs = tabList.querySelectorAll(".tab");
-        if (i < allTabs.length) {
-            tabList.insertBefore(el, allTabs[i]);
+        if (i < tabList.children.length) {
+            tabList.insertBefore(el, tabList.children[i]);
         }
         else {
             tabList.appendChild(el);
@@ -206,32 +240,29 @@ const modalUrlField = getEl("modal-url-field");
 // ── SIDEBAR TOGGLE + RESIZE ───────────────────────────────────────────────────
 const SIDEBAR_MIN = 160;
 const SIDEBAR_MAX = 500;
-const DRAG_THRESHOLD = 4; // pixels moved before we treat it as a drag not a click
+const DRAG_THRESHOLD = 4;
 let sidebarWidth = 240;
 let isDragging = false;
 let dragStartX = 0;
 let dragStartWidth = 0;
 let dragMoved = 0;
-// Remove the CSS transition while dragging so it follows the mouse instantly
 function setSidebarWidth(width) {
     sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, width));
     sidebar.style.width = `${sidebarWidth}px`;
 }
 toggleTabEl.addEventListener("mousedown", (e) => {
     if (e.button !== 0)
-        return; // left click only
+        return;
     isDragging = false;
     dragMoved = 0;
     dragStartX = e.clientX;
     dragStartWidth = sidebar.classList.contains("open") ? sidebarWidth : 0;
-    // Disable transition for smooth dragging
     sidebar.style.transition = "none";
     const onMouseMove = (e) => {
         const delta = e.clientX - dragStartX;
         dragMoved = Math.abs(delta);
         if (dragMoved > DRAG_THRESHOLD) {
             isDragging = true;
-            // If sidebar was closed, open it as soon as we start dragging right
             if (!sidebar.classList.contains("open") && delta > 0) {
                 sidebar.classList.add("open");
                 toggleTabEl.classList.add("open");
@@ -245,10 +276,8 @@ toggleTabEl.addEventListener("mousedown", (e) => {
     const onMouseUp = () => {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
-        // Restore transition
         sidebar.style.transition = "";
         if (!isDragging) {
-            // It was a clean click — toggle open/close
             const isOpen = sidebar.classList.toggle("open");
             toggleTabEl.classList.toggle("open");
             if (isOpen) {
@@ -259,7 +288,6 @@ toggleTabEl.addEventListener("mousedown", (e) => {
             }
         }
         else {
-            // Finished dragging — if dragged to below min, close sidebar
             if (sidebarWidth <= SIDEBAR_MIN && dragStartWidth > SIDEBAR_MIN) {
                 sidebar.classList.remove("open");
                 toggleTabEl.classList.remove("open");
@@ -470,10 +498,9 @@ function insertNode(node) {
     }
 }
 // ── INIT ──────────────────────────────────────────────────────────────────────
-// Listen for new-tab requests coming from webview window.open() calls,
-// intercepted at the main process level and forwarded here via IPC
 window.electronAPI.onOpenInNewTab((url) => {
     openTab(url, urlToTitle(url));
 });
 renderTree();
+restoreTabs(); // Restore previous session
 renderTabs();
