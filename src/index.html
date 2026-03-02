@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PoE Companion</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h2>PoE Companion</h2>
+      <p>Right-click to add pages &amp; folders</p>
+    </div>
+    <div id="tree"></div>
+  </div>
+
+  <!-- Sidebar toggle tab -->
+  <div id="toggle-tab">
+    <svg width="10" height="16" viewBox="0 0 10 16" fill="none"
+         stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="3,2 8,8 3,14"/>
+    </svg>
+  </div>
+
+  <!-- Main area: tab bar + webview -->
+  <div id="main-area">
+    <div id="tab-bar">
+      <div id="tab-list"></div>
+    </div>
+    <div id="webview-container">
+      <!-- webview elements are injected here by renderer.ts -->
+    </div>
+  </div>
+
+</div>
+
+<!-- Context Menu -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-add-page"><span class="ctx-icon">📄</span> New Page</div>
+  <div class="ctx-item" id="ctx-add-folder"><span class="ctx-icon">📁</span> New Folder</div>
+  <div id="ctx-rename-sep" class="ctx-sep" style="display:none"></div>
+  <div class="ctx-item" id="ctx-rename" style="display:none"><span class="ctx-icon">✏️</span> Rename</div>
+  <div class="ctx-item danger" id="ctx-delete" style="display:none"><span class="ctx-icon">🗑️</span> Delete</div>
+</div>
+
+<!-- Modal -->
+<div id="modal-overlay">
+  <div id="modal">
+    <h3 id="modal-title">New Page</h3>
+    <div class="modal-field">
+      <label>Name</label>
+      <input id="modal-name" type="text" placeholder="e.g. PoE Wiki" />
+    </div>
+    <div class="modal-field" id="modal-url-field">
+      <label>URL</label>
+      <input id="modal-url" type="text" placeholder="https://..." />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-cancel" id="modal-cancel">Cancel</button>
+      <button class="btn btn-confirm" id="modal-confirm">Create</button>
+    </div>
+  </div>
+</div>
+
+<script src="renderer.js"></script>
+</body>
+</html>
