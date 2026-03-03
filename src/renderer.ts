@@ -131,7 +131,6 @@ function createTab(url: string, title: string, existingId?: string): BrowserTab 
   const tab: BrowserTab = { id, title, url, webview };
   tabs.push(tab);
 
-  // Update tab title and save state
   webview.addEventListener("page-title-updated", (e) => {
     tab.title = e.title;
     const tabEl = tabList.querySelector<HTMLElement>(`.tab[data-id="${id}"]`);
@@ -142,7 +141,6 @@ function createTab(url: string, title: string, existingId?: string): BrowserTab 
     saveTabs();
   });
 
-  // Track the live URL and save state
   webview.addEventListener("did-navigate", (e) => {
     tab.url = e.url;
     saveTabs();
@@ -155,10 +153,7 @@ function createTab(url: string, title: string, existingId?: string): BrowserTab 
     }
   });
 
-  // NEW: Context Menu Handler
-  // Note: 'context-menu' is a special Electron event, not the standard DOM contextmenu
   webview.addEventListener("context-menu", (e: any) => {
-    // The 'params' object contains linkURL, srcURL, selectionText, etc.
     (window as any).electronAPI.showContextMenu(e.params);
   });
 
@@ -299,6 +294,9 @@ let ctxTarget: CtxTarget | null = null;
 let modalMode: ModalMode | null = null;
 let activePageId: string | null = null;
 
+// NEW: Drag State
+let dragSrcId: string | null = null;
+
 // ── ELEMENTS ──────────────────────────────────────────────────────────────────
 
 const sidebar       = getEl<HTMLDivElement>("sidebar");
@@ -381,7 +379,7 @@ toggleTabEl.addEventListener("mousedown", (e: MouseEvent) => {
   document.addEventListener("mouseup", onMouseUp);
 });
 
-// ── RENDER TREE ───────────────────────────────────────────────────────────────
+// ── RENDER TREE (UPDATED FOR DRAG & DROP) ─────────────────────────────────────
 
 function renderTree(): void {
   treeEl.innerHTML = "";
@@ -396,7 +394,89 @@ function renderNodes(nodes: TreeNode[], container: HTMLElement, depth: number): 
     const row = document.createElement("div");
     row.className = "node-row" + (node.id === activePageId ? " active" : "");
     row.dataset["id"] = node.id;
+    row.draggable = true; // Enable Dragging
 
+    // ── Drag Handlers ──
+    row.addEventListener("dragstart", (e) => {
+      dragSrcId = node.id;
+      e.dataTransfer!.effectAllowed = "move";
+      row.classList.add("dragging");
+    });
+
+    row.addEventListener("dragend", () => {
+      dragSrcId = null;
+      row.classList.remove("dragging");
+      // Clean up drag classes
+      document.querySelectorAll(".drag-over-top, .drag-over-bottom, .drag-over-inside").forEach(el => {
+        el.classList.remove("drag-over-top", "drag-over-bottom", "drag-over-inside");
+      });
+    });
+
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault(); // Necessary to allow dropping
+      if (!dragSrcId || dragSrcId === node.id) return;
+      
+      // Don't allow dropping a parent into its own child
+      if (isDescendant(dragSrcId, node.id)) return;
+
+      const rect = row.getBoundingClientRect();
+      const relY = e.clientY - rect.top;
+      const height = rect.height;
+
+      // Reset classes
+      row.classList.remove("drag-over-top", "drag-over-bottom", "drag-over-inside");
+
+      // Logic: 
+      // Top 25% -> Drop Before
+      // Bottom 25% -> Drop After
+      // Middle 50% -> Drop Inside (if folder) or After (if page)
+      
+      if (relY < height * 0.25) {
+        row.classList.add("drag-over-top");
+      } else if (relY > height * 0.75) {
+        row.classList.add("drag-over-bottom");
+      } else {
+        if (node.type === "folder") {
+          row.classList.add("drag-over-inside");
+        } else {
+          // If hovering middle of a page, default to 'bottom' (insert after)
+          row.classList.add("drag-over-bottom");
+        }
+      }
+    });
+
+    row.addEventListener("dragleave", () => {
+      row.classList.remove("drag-over-top", "drag-over-bottom", "drag-over-inside");
+    });
+
+    row.addEventListener("drop", (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      
+      if (!dragSrcId || dragSrcId === node.id) return;
+      
+      const rect = row.getBoundingClientRect();
+      const relY = e.clientY - rect.top;
+      const height = rect.height;
+      
+      let pos: "before" | "after" | "inside" = "after";
+
+      if (relY < height * 0.25) {
+        pos = "before";
+      } else if (relY > height * 0.75) {
+        pos = "after";
+      } else {
+        if (node.type === "folder") {
+          pos = "inside";
+        } else {
+          pos = "after";
+        }
+      }
+
+      moveNode(dragSrcId, node.id, pos);
+    });
+
+    // ── Icon / Label ──
     if (node.type === "folder") {
       const chev = document.createElement("span");
       chev.className = "node-icon chevron" + (node.open ? " open" : "");
@@ -455,6 +535,66 @@ function renderNodes(nodes: TreeNode[], container: HTMLElement, depth: number): 
 
     container.appendChild(el);
   });
+}
+
+// ── DATA MANIPULATION HELPERS ────────────────────────────────────────────────
+
+// Check if 'targetId' is inside 'sourceId' (to prevent drag cycles)
+function isDescendant(sourceId: string, targetId: string): boolean {
+  const sourceNode = findNodeRecursive(data, sourceId);
+  if (!sourceNode || sourceNode.type !== "folder") return false;
+  return !!findNodeRecursive((sourceNode as FolderNode).children, targetId);
+}
+
+function findNodeRecursive(nodes: TreeNode[], id: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    if (node.type === "folder" && (node as FolderNode).children) {
+      const found = findNodeRecursive((node as FolderNode).children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function moveNode(sourceId: string, targetId: string, position: "before" | "after" | "inside"): void {
+  // 1. Find source and remove it
+  const sourceParent = findParent(data, sourceId) ?? data;
+  const sourceIndex = sourceParent.findIndex(n => n.id === sourceId);
+  if (sourceIndex === -1) return;
+  const [nodeToMove] = sourceParent.splice(sourceIndex, 1);
+
+  // 2. Find target location
+  // Note: If we dropped inside a folder, the targetParent IS the folder's children array
+  let targetParent = findParent(data, targetId) ?? data;
+  
+  if (position === "inside") {
+    // If dropping inside, we need to find the specific folder node to push into
+    const targetFolder = findNodeRecursive(data, targetId) as FolderNode;
+    if (targetFolder && targetFolder.type === "folder") {
+      targetFolder.children ??= [];
+      targetFolder.children.push(nodeToMove);
+      targetFolder.open = true; // Auto open
+    } else {
+      // Fallback: put it back where it was if something failed
+      sourceParent.splice(sourceIndex, 0, nodeToMove);
+      return;
+    }
+  } else {
+    // Dropping before or after a node
+    const targetIndex = targetParent.findIndex(n => n.id === targetId);
+    if (targetIndex === -1) {
+      // Fallback
+      sourceParent.splice(sourceIndex, 0, nodeToMove);
+      return;
+    }
+
+    const newIndex = position === "before" ? targetIndex : targetIndex + 1;
+    targetParent.splice(newIndex, 0, nodeToMove);
+  }
+
+  save();
+  renderTree();
 }
 
 function findParent(arr: TreeNode[], id: string, parent: TreeNode[] = arr): TreeNode[] | null {

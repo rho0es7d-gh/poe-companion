@@ -38,7 +38,7 @@ html, body {
   display: flex;
   width: 100%;
   height: 100%;
-  padding-top: var(--titlebar-height); /* space for native title bar overlay */
+  padding-top: var(--titlebar-height);
 }
 
 /* ── SIDEBAR ── */
@@ -102,6 +102,8 @@ html, body {
   cursor: pointer;
   transition: background 0.15s;
   font-size: 13.5px;
+  border-top: 2px solid transparent;
+  border-bottom: 2px solid transparent;
 }
 
 .node-row:hover { background: var(--hover); }
@@ -139,6 +141,12 @@ html, body {
 .indent-2 .node-row { padding-left: 40px; }
 .indent-3 .node-row { padding-left: 56px; }
 .indent-4 .node-row { padding-left: 72px; }
+
+/* ── DRAG & DROP ── */
+.node-row.dragging { opacity: 0.5; background: var(--hover); }
+.node-row.drag-over-top { border-top-color: var(--accent); }
+.node-row.drag-over-bottom { border-bottom-color: var(--accent); }
+.node-row.drag-over-inside { background: var(--hover); box-shadow: inset 0 0 0 1px var(--accent); }
 
 /* ── TOGGLE TAB ── */
 #toggle-tab {
