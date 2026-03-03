@@ -29,6 +29,7 @@ interface BrowserTab {
   title: string;
   url: string;
   webview: Electron.WebviewTag;
+  loaded: boolean;
 }
 
 interface SavedTabState {
@@ -114,11 +115,14 @@ function saveTabs(): void {
   localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(state));
 }
 
-function createTab(url: string, title: string, existingId?: string): BrowserTab {
+function createTab(url: string, title: string, existingId?: string, lazy = false): BrowserTab {
   const id = existingId || uid();
 
   const webview = document.createElement("webview") as Electron.WebviewTag;
-  webview.src = url;
+
+  // Only set src immediately if not lazy — lazy tabs load when first activated
+  if (!lazy) webview.src = url;
+
   webview.setAttribute("allowpopups", "true");
   webview.style.position = "absolute";
   webview.style.inset = "0";
@@ -128,7 +132,7 @@ function createTab(url: string, title: string, existingId?: string): BrowserTab 
 
   webviewContainer.appendChild(webview);
 
-  const tab: BrowserTab = { id, title, url, webview };
+  const tab: BrowserTab = { id, title, url, webview, loaded: !lazy };
   tabs.push(tab);
 
   webview.addEventListener("page-title-updated", (e) => {
@@ -143,16 +147,18 @@ function createTab(url: string, title: string, existingId?: string): BrowserTab 
 
   webview.addEventListener("did-navigate", (e) => {
     tab.url = e.url;
-    if (tab.id === activeTabId) updateUrlBar(e.url);
     saveTabs();
   });
 
   webview.addEventListener("did-navigate-in-page", (e) => {
     if (e.isMainFrame) {
       tab.url = e.url;
-      if (tab.id === activeTabId) updateUrlBar(e.url);
       saveTabs();
     }
+  });
+
+  webview.addEventListener("context-menu", (e: any) => {
+    (window as any).electronAPI.showContextMenu(e.params);
   });
 
   return tab;
@@ -187,13 +193,36 @@ function closeTab(id: string): void {
   saveTabs();
 }
 
+function getActiveWebview(): Electron.WebviewTag | null {
+  return tabs.find((t) => t.id === activeTabId)?.webview ?? null;
+}
+
+function updateUrlBar(url: string): void {
+  const urlInput = document.getElementById("url-input") as HTMLInputElement | null;
+  if (urlInput && document.activeElement !== urlInput) {
+    urlInput.value = url;
+  }
+  const wv = getActiveWebview();
+  const urlBack    = document.getElementById("url-back")    as HTMLButtonElement | null;
+  const urlForward = document.getElementById("url-forward") as HTMLButtonElement | null;
+  if (urlBack)    urlBack.disabled    = !wv?.canGoBack();
+  if (urlForward) urlForward.disabled = !wv?.canGoForward();
+}
+
 function setActiveTab(id: string): void {
   activeTabId = id;
   tabs.forEach((t) => {
     t.webview.style.display = t.id === id ? "flex" : "none";
   });
   const activeTab = tabs.find((t) => t.id === id);
-  if (activeTab) updateUrlBar(activeTab.url);
+  if (activeTab) {
+    // First time activating a lazy-restored tab — load it now
+    if (!activeTab.loaded) {
+      activeTab.webview.src = activeTab.url;
+      activeTab.loaded = true;
+    }
+    updateUrlBar(activeTab.url);
+  }
   renderTabs();
   saveTabs();
 }
@@ -204,10 +233,12 @@ function restoreTabs(): void {
 
   try {
     const state: SavedTabState = JSON.parse(raw);
-    
+
     if (state.tabs && Array.isArray(state.tabs)) {
       state.tabs.forEach(t => {
-        createTab(t.url, t.title, t.id);
+        // All restored tabs are lazy — only the active one loads on startup
+        const isActive = t.id === state.activeId;
+        createTab(t.url, t.title, t.id, !isActive);
       });
     }
 
@@ -732,57 +763,40 @@ function insertNode(node: TreeNode): void {
   }
 }
 
-// ── URL BAR ───────────────────────────────────────────────────────────────────
+// ── URL BAR EVENTS ────────────────────────────────────────────────────────────
 
-const urlInput   = getEl<HTMLInputElement>("url-input");
-const urlBack    = getEl<HTMLButtonElement>("url-back");
-const urlForward = getEl<HTMLButtonElement>("url-forward");
-const urlReload  = getEl<HTMLButtonElement>("url-reload");
+const urlInputEl   = document.getElementById("url-input")   as HTMLInputElement;
+const urlBackEl    = document.getElementById("url-back")     as HTMLButtonElement;
+const urlForwardEl = document.getElementById("url-forward")  as HTMLButtonElement;
+const urlReloadEl  = document.getElementById("url-reload")   as HTMLButtonElement;
 
-function getActiveWebview(): Electron.WebviewTag | null {
-  return tabs.find((t) => t.id === activeTabId)?.webview ?? null;
-}
+if (urlBackEl)    urlBackEl.addEventListener("click",    () => getActiveWebview()?.goBack());
+if (urlForwardEl) urlForwardEl.addEventListener("click", () => getActiveWebview()?.goForward());
+if (urlReloadEl)  urlReloadEl.addEventListener("click",  () => getActiveWebview()?.reload());
 
-function updateUrlBar(url: string): void {
-  // Don't overwrite while the user is typing
-  if (document.activeElement !== urlInput) {
-    urlInput.value = url;
-  }
-  const wv = getActiveWebview();
-  urlBack.disabled    = !wv?.canGoBack();
-  urlForward.disabled = !wv?.canGoForward();
-}
+if (urlInputEl) {
+  urlInputEl.addEventListener("focus", () => urlInputEl.select());
 
-urlBack.addEventListener("click", () => getActiveWebview()?.goBack());
-urlForward.addEventListener("click", () => getActiveWebview()?.goForward());
-urlReload.addEventListener("click", () => getActiveWebview()?.reload());
+  urlInputEl.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key !== "Enter") return;
+    let url = urlInputEl.value.trim();
+    if (!url) return;
 
-urlInput.addEventListener("keydown", (e: KeyboardEvent) => {
-  if (e.key !== "Enter") return;
-  let url = urlInput.value.trim();
-  if (!url) return;
-
-  // If it looks like a bare domain or has no protocol, add https://
-  if (!/^https?:\/\//i.test(url)) {
-    // Looks like a search query (has spaces or no dot)
-    if (url.includes(" ") || !url.includes(".")) {
-      url = `https://www.google.com/search?q=${encodeURIComponent(url)}`;
-    } else {
-      url = `https://${url}`;
+    if (!/^https?:\/\//i.test(url)) {
+      url = url.includes(" ") || !url.includes(".")
+        ? `https://www.google.com/search?q=${encodeURIComponent(url)}`
+        : `https://${url}`;
     }
-  }
 
-  const wv = getActiveWebview();
-  if (wv) {
-    wv.loadURL(url);
-  } else {
-    openTab(url, urlToTitle(url));
-  }
-  urlInput.blur();
-});
-
-// Select all text when clicking the URL bar
-urlInput.addEventListener("focus", () => urlInput.select());
+    const wv = getActiveWebview();
+    if (wv) {
+      wv.loadURL(url);
+    } else {
+      openTab(url, urlToTitle(url));
+    }
+    urlInputEl.blur();
+  });
+}
 
 // ── INIT ──────────────────────────────────────────────────────────────────────
 
