@@ -90,16 +90,17 @@ function createTab(url, title, existingId) {
     });
     webview.addEventListener("did-navigate", (e) => {
         tab.url = e.url;
+        if (tab.id === activeTabId)
+            updateUrlBar(e.url);
         saveTabs();
     });
     webview.addEventListener("did-navigate-in-page", (e) => {
         if (e.isMainFrame) {
             tab.url = e.url;
+            if (tab.id === activeTabId)
+                updateUrlBar(e.url);
             saveTabs();
         }
-    });
-    webview.addEventListener("context-menu", (e) => {
-        window.electronAPI.showContextMenu(e.params);
     });
     return tab;
 }
@@ -132,6 +133,9 @@ function setActiveTab(id) {
     tabs.forEach((t) => {
         t.webview.style.display = t.id === id ? "flex" : "none";
     });
+    const activeTab = tabs.find((t) => t.id === id);
+    if (activeTab)
+        updateUrlBar(activeTab.url);
     renderTabs();
     saveTabs();
 }
@@ -626,6 +630,53 @@ function insertNode(node) {
         (parentArray ?? data).push(node);
     }
 }
+// ── URL BAR ───────────────────────────────────────────────────────────────────
+const urlInput = getEl("url-input");
+const urlBack = getEl("url-back");
+const urlForward = getEl("url-forward");
+const urlReload = getEl("url-reload");
+function getActiveWebview() {
+    return tabs.find((t) => t.id === activeTabId)?.webview ?? null;
+}
+function updateUrlBar(url) {
+    // Don't overwrite while the user is typing
+    if (document.activeElement !== urlInput) {
+        urlInput.value = url;
+    }
+    const wv = getActiveWebview();
+    urlBack.disabled = !wv?.canGoBack();
+    urlForward.disabled = !wv?.canGoForward();
+}
+urlBack.addEventListener("click", () => getActiveWebview()?.goBack());
+urlForward.addEventListener("click", () => getActiveWebview()?.goForward());
+urlReload.addEventListener("click", () => getActiveWebview()?.reload());
+urlInput.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter")
+        return;
+    let url = urlInput.value.trim();
+    if (!url)
+        return;
+    // If it looks like a bare domain or has no protocol, add https://
+    if (!/^https?:\/\//i.test(url)) {
+        // Looks like a search query (has spaces or no dot)
+        if (url.includes(" ") || !url.includes(".")) {
+            url = `https://www.google.com/search?q=${encodeURIComponent(url)}`;
+        }
+        else {
+            url = `https://${url}`;
+        }
+    }
+    const wv = getActiveWebview();
+    if (wv) {
+        wv.loadURL(url);
+    }
+    else {
+        openTab(url, urlToTitle(url));
+    }
+    urlInput.blur();
+});
+// Select all text when clicking the URL bar
+urlInput.addEventListener("focus", () => urlInput.select());
 // ── INIT ──────────────────────────────────────────────────────────────────────
 window.electronAPI.onOpenInNewTab((url) => {
     openTab(url, urlToTitle(url));

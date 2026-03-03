@@ -269,6 +269,63 @@ html, body {
   color: var(--danger);
 }
 
+/* ── URL BAR ── */
+#url-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--tab-bar-bg);
+  border-bottom: 1px solid var(--tab-border);
+  flex-shrink: 0;
+}
+
+#url-bar button {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  line-height: 1;
+}
+
+#url-bar button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--accent);
+  border-color: var(--ctx-border);
+}
+
+#url-bar button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+#url-input {
+  flex: 1;
+  height: 26px;
+  background: var(--input-bg);
+  border: 1px solid var(--ctx-border);
+  border-radius: 4px;
+  padding: 0 10px;
+  color: var(--text);
+  font-family: 'Crimson Pro', serif;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+#url-input:focus {
+  border-color: var(--accent-dim);
+}
+
 /* ── WEBVIEW CONTAINER ── */
 #webview-container {
   flex: 1;

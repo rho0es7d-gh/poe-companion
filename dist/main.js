@@ -45,12 +45,55 @@ function createWindow() {
     // B. Fixing "Target=_blank" Links
     electron_1.app.on("web-contents-created", (_event, contents) => {
         if (contents.getType() === "webview") {
+            // New window → open as tab in renderer
             contents.setWindowOpenHandler(({ url }) => {
                 win.webContents.send("open-in-new-tab", url);
                 return { action: "deny" };
             });
-            contents.on('will-navigate', (event, url) => {
-                // Allow internal navigation
+            // Right-click context menu — build menu here so Back/Forward/Reload
+            // correctly target THIS webview's webContents, not the main window
+            contents.on("context-menu", (_e, params) => {
+                const template = [];
+                if (params.linkURL) {
+                    template.push({
+                        label: "Open Link in New Tab",
+                        click: () => win.webContents.send("open-in-new-tab", params.linkURL),
+                    });
+                    template.push({
+                        label: "Copy Link Address",
+                        click: () => electron_1.clipboard.writeText(params.linkURL),
+                    });
+                }
+                if (params.mediaType === "image" && params.srcURL) {
+                    template.push({
+                        label: "Copy Image Address",
+                        click: () => electron_1.clipboard.writeText(params.srcURL),
+                    });
+                }
+                if (params.selectionText) {
+                    template.push({ role: "copy" });
+                }
+                if (template.length > 0)
+                    template.push({ type: "separator" });
+                template.push({
+                    label: "Copy Page URL",
+                    click: () => electron_1.clipboard.writeText(params.pageURL),
+                });
+                template.push({ type: "separator" });
+                // These now correctly call contents (the webview), not event.sender (the shell)
+                template.push({
+                    label: "Back",
+                    enabled: contents.canGoBack(),
+                    click: () => contents.goBack(),
+                }, {
+                    label: "Forward",
+                    enabled: contents.canGoForward(),
+                    click: () => contents.goForward(),
+                }, {
+                    label: "Reload",
+                    click: () => contents.reload(),
+                });
+                electron_1.Menu.buildFromTemplate(template).popup({ window: win });
             });
         }
     });
@@ -70,45 +113,6 @@ electron_1.app.whenReady().then(() => {
         delete headers["content-security-policy"];
         delete headers["Content-Security-Policy"];
         callback({ responseHeaders: headers });
-    });
-    // D. Context Menu Handler (Right Click)
-    electron_1.ipcMain.on("show-context-menu", (event, params) => {
-        const template = [];
-        // 1. Link Actions
-        if (params.linkURL) {
-            template.push({
-                label: "Copy Link Address",
-                click: () => electron_1.clipboard.writeText(params.linkURL),
-            });
-        }
-        // 2. Image Actions
-        if (params.mediaType === "image" && params.srcURL) {
-            template.push({
-                label: "Copy Image Address",
-                click: () => electron_1.clipboard.writeText(params.srcURL),
-            });
-        }
-        // 3. Selection Actions
-        if (params.selectionText) {
-            template.push({ role: "copy" });
-        }
-        // Separator if we have added anything above
-        if (template.length > 0) {
-            template.push({ type: "separator" });
-        }
-        // 4. General Actions
-        template.push({
-            label: "Copy Page URL",
-            click: () => electron_1.clipboard.writeText(params.pageURL),
-        });
-        // 5. Navigation & DevTools
-        template.push({ type: "separator" }, { label: "Back", enabled: params.editFlags.canGoBack, click: () => event.sender.goBack() }, { label: "Forward", enabled: params.editFlags.canGoForward, click: () => event.sender.goForward() }, { label: "Reload", click: () => event.sender.reload() });
-        const menu = electron_1.Menu.buildFromTemplate(template);
-        // We need to show the menu attached to the window that sent the event
-        const win = electron_1.BrowserWindow.fromWebContents(event.sender);
-        if (win) {
-            menu.popup({ window: win });
-        }
     });
     createWindow();
     electron_1.app.on("activate", () => {
