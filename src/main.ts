@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, ipcMain, Menu, clipboard } from "electron";
+import { app, BrowserWindow, session, ipcMain, Menu, clipboard, nativeTheme } from "electron";
 import path from "path";
 
 // A. Ad-Blocking List
@@ -22,6 +22,7 @@ function createWindow(): void {
     minWidth: 600,
     minHeight: 400,
     backgroundColor: "#0e0c0a",
+    // darkTheme: true is deprecated on some platforms, nativeTheme (below) is better
     titleBarStyle: "hidden",
     titleBarOverlay: {
       color: "#0e0c0a",
@@ -57,6 +58,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // NEW: Force the entire app (and webviews) into Dark Mode
+  nativeTheme.themeSource = "dark";
+
   // A. Register Ad-Blocker
   session.defaultSession.webRequest.onBeforeRequest(adFilter, (details, callback) => {
     callback({ cancel: true }); 
